@@ -30,7 +30,7 @@ object Main extends App {
           formFields('name.?, 'after.?, 'before.?, 'channel.?, 'text.?, 'regex.?, 'limit.?, 'context.?)
             .as(PlackeyMessages.Query) { q ⇒
               implicit val askTimeout: Timeout = 30.seconds
-              val actor = actorSystem.actorOf(Props[Plactor])
+              val actor = actorSystem.actorOf(Plactor.props(cf))
               onSuccess((actor ? q).mapTo[PlackeyMessages.Response]) { resp =>
                 complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, resp.text))
               }

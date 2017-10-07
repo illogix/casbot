@@ -34,7 +34,7 @@ class Bot(config: Config)(implicit val system: ActorSystem, val materializer: Ac
   import akka.pattern.pipe
   import context.dispatcher
 
-  private val cassie = context.actorOf(Props[Cassie], "cassie")
+  private val cassie = context.actorOf(Cassie.props(config), "cassie")
 
   private val url = config.getString("slack.apiUrl")
   private val token = config.getString("slack.apiToken")

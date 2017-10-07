@@ -7,11 +7,13 @@ import com.illojones.web.slack.SlackMessages
 import com.illojones.web.slack.cassie.Cassie._
 import com.illojones.web.slack.cassie.database.DatabaseActor
 import com.illojones.web.slack.cassie.games.RPS
+import com.typesafe.config.Config
 
 import scala.concurrent.Await
 import scala.concurrent.duration._
 
 object Cassie {
+  def props(config: Config) = Props(new Cassie(config))
   case object Init
 
   final val StartingBalance = 1000
@@ -45,9 +47,9 @@ object Cassie {
 
 }
 
-class Cassie extends Actor with ActorLogging with Stash {
+class Cassie(config: Config) extends Actor with ActorLogging with Stash {
 
-  private val dbActor = context.actorOf(Props[DatabaseActor], "dbActor")
+  private val dbActor = context.actorOf(DatabaseActor.props(config), "dbActor")
 
   private var players: Map[String, Player] = Map.empty
 

@@ -9,16 +9,13 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 
 object DatabaseUtil {
-  val dbHost = "localhost"
-  val dbDb = "illo"
-  val dbUser = "illo"
-  val dbPassword = ""
-  val dbConnectionUrl = s"jdbc:postgresql://$dbHost/$dbDb?user=$dbUser&password=$dbPassword"
+  def dbConnectionUrl(dbHost: String, dbDb: String, dbUser: String, dbPassword: String) =
+    s"jdbc:postgresql://$dbHost/$dbDb?user=$dbUser&password=$dbPassword"
   val dbDriver = "org.postgresql.Driver"
 
   type DB = PostgresProfile.backend.DatabaseDef
 
-  def getDatabase = Database.forURL(dbConnectionUrl, driver = dbDriver)
+  def getDatabase(url: String) = Database.forURL(url, driver = dbDriver)
 
   case class DBPlayer(user: String, balance: Int)
 

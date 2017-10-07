@@ -1,13 +1,16 @@
 package com.illojones.web.slack.cassie.database
 
-import akka.actor.{Actor, ActorLogging, PoisonPill, Stash}
+import akka.actor.{Actor, ActorLogging, PoisonPill, Props, Stash}
 import com.illojones.web.slack.cassie.Cassie.Player
 import com.illojones.web.slack.cassie.database.DatabaseActor._
+import com.typesafe.config.Config
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}
 
 object DatabaseActor {
+  def props(config: Config) = Props(new DatabaseActor(config))
+
   case object Ready
 
   sealed trait Request
@@ -21,8 +24,9 @@ object DatabaseActor {
   case class GetPlayersResponse(players: Seq[Player], errorMsg: Option[String] = None) extends Response
 }
 
-class DatabaseActor extends Actor with ActorLogging with Stash {
-  val db = DatabaseUtil.getDatabase
+class DatabaseActor(config: Config) extends Actor with ActorLogging with Stash {
+  val db = DatabaseUtil.getDatabase(DatabaseUtil.dbConnectionUrl(config.getString("cassie.dbHost"),
+    config.getString("cassie.dbDb"), config.getString("cassie.dbUser"), config.getString("cassie.dbPassword")))
 
   override def preStart(): Unit = {
     super.preStart()

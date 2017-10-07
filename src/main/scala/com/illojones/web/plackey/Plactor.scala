@@ -1,14 +1,20 @@
 package com.illojones.web.plackey
 
-import akka.actor.{Actor, ActorLogging, ActorRef}
+import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 import com.illojones.web.plackey.database.DatabaseUtil
+import com.typesafe.config.Config
 
 import scala.util.{Failure, Success}
 import scala.concurrent.ExecutionContext.Implicits.global
 
-class Plactor extends Actor with ActorLogging {
+object Plactor {
+  def props(config: Config) = Props(new Plactor(config))
+}
 
-  val db = DatabaseUtil.getDatabase
+class Plactor(config: Config) extends Actor with ActorLogging {
+
+  val db = DatabaseUtil.getDatabase(DatabaseUtil.dbConnectionUrl(config.getString("plackey.dbHost"),
+    config.getString("plackey.dbDb"), config.getString("plackey.dbUser"), config.getString("plackey.dbPassword")))
 
   def processQuery(q: PlackeyMessages.Query, toReply: ActorRef) = {
     DatabaseUtil.runQuery(db, q) onComplete {

@@ -10,11 +10,8 @@ import scala.concurrent.Future
 import scala.util.{Success, Try}
 
 object DatabaseUtil {
-  val dbHost = "localhost"
-  val dbDb = "illo"
-  val dbUser = "illo"
-  val dbPassword = ""
-  val dbConnectionUrl = s"jdbc:postgresql://$dbHost/$dbDb?user=$dbUser&password=$dbPassword"
+  def dbConnectionUrl(dbHost: String, dbDb: String, dbUser: String, dbPassword: String) =
+    s"jdbc:postgresql://$dbHost/$dbDb?user=$dbUser&password=$dbPassword"
   val dbDriver = "org.postgresql.Driver"
 
   val logSchema: Option[String] = None //Some("chat")
@@ -22,7 +19,7 @@ object DatabaseUtil {
 
   type DB = PostgresProfile.backend.DatabaseDef
 
-  def getDatabase = Database.forURL(dbConnectionUrl, driver = dbDriver)
+  def getDatabase(url: String) = Database.forURL(url, driver = dbDriver)
 
   case class Log(id: Long, teamId: String, channelId: String, channelName: String, timestamp: Timestamp,
                  userId: String, userName: String, text: String)
