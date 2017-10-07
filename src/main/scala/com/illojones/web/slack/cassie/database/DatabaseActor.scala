@@ -1,8 +1,8 @@
-package com.illojones.web.slack.casbot.database
+package com.illojones.web.slack.cassie.database
 
 import akka.actor.{Actor, ActorLogging, PoisonPill, Stash}
-import com.illojones.web.slack.casbot.Casbot.Player
-import com.illojones.web.slack.casbot.database.DatabaseActor._
+import com.illojones.web.slack.cassie.Cassie.Player
+import com.illojones.web.slack.cassie.database.DatabaseActor._
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}

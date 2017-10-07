@@ -1,20 +1,21 @@
-package com.illojones.web.slack.casbot
+package com.illojones.web.slack.cassie
 
 import akka.actor.{Actor, ActorLogging, PoisonPill, Props, Stash}
 import akka.pattern.ask
+import com.illojones.web.slack.Bot.SendMessage
 import com.illojones.web.slack.SlackMessages
-import com.illojones.web.slack.casbot.Casbot._
-import com.illojones.web.slack.casbot.database.DatabaseActor
-import com.illojones.web.slack.casbot.games.RPS
+import com.illojones.web.slack.cassie.Cassie._
+import com.illojones.web.slack.cassie.database.DatabaseActor
+import com.illojones.web.slack.cassie.games.RPS
 
 import scala.concurrent.Await
 import scala.concurrent.duration._
 
-object Casbot {
+object Cassie {
   case object Init
 
   final val StartingBalance = 1000
-  case class Player(id: String, name: String, balance: Int = StartingBalance, currentGame: Option[Game] = None)
+  case class Player(user: String, balance: Int = StartingBalance, currentGame: Option[Game] = None)
 
   sealed trait Game {
     def ante: Int
@@ -25,6 +26,7 @@ object Casbot {
   case class Roshambo(ante: Int) extends Game
 
   object GameCommands {
+    final val Withdraw = "!atm"
     final val Blackjack = "!bj (\\d+)".r
     final val Roshambo = "!rps (\\d+) (rock|paper|scissors|r|p|s)".r
   }
@@ -43,7 +45,7 @@ object Casbot {
 
 }
 
-class Casbot extends Actor with ActorLogging with Stash {
+class Cassie extends Actor with ActorLogging with Stash {
 
   private val dbActor = context.actorOf(Props[DatabaseActor], "dbActor")
 
@@ -59,27 +61,36 @@ class Casbot extends Actor with ActorLogging with Stash {
     implicit val timeout: akka.util.Timeout = 5.seconds
     val respF = (dbActor ? DatabaseActor.UpdatePlayer(updatedPlayer)).mapTo[DatabaseActor.UpdatePlayerResponse]
     val resp = Await.result(respF, 5.seconds)
-    if (resp.errorMsg.isEmpty) players = players + (updatedPlayer.id → updatedPlayer)
+    if (resp.errorMsg.isEmpty) players = players + (updatedPlayer.user → updatedPlayer)
 
     resp.errorMsg
   }
 
-  def add(id: String, name: String, game: Game, result: Option[Result] = None) = {
-    val player = players.getOrElse(id, Player(id, name))
+  def add(user: String, game: Game, result: Option[Result] = None) = {
+    val player = players.getOrElse(user, Player(user))
     player.currentGame match {
-      case Some(cg) ⇒ s"$name is already playing ${cg.getClass.getSimpleName}"
+      case Some(cg) ⇒ s"<@$user> is already playing ${cg.getClass.getSimpleName}"
       case _ if game.ante <= player.balance ⇒
         result match {
           case None ⇒
             val newPlayer = player.copy(balance = player.balance - game.ante, currentGame = Some(game))
-            updatePlayer(newPlayer).getOrElse(s"$name is now playing ${game.getClass.getSimpleName}")
+            updatePlayer(newPlayer).getOrElse(s"<@$user> is now playing ${game.getClass.getSimpleName}")
           case Some(res) ⇒
             val newBalance = player.balance - game.ante + res.winnings(game.ante)
             val updatedPlayer = player.copy(balance = newBalance, currentGame = None)
             updatePlayer(updatedPlayer).getOrElse(s"${res.message} (new balance: $newBalance)")
         }
       case _ ⇒
-        s"$name doesn't have ${game.ante} (${player.balance})"
+        s"<@$user> doesn't have ${game.ante} (${player.balance})"
+    }
+  }
+
+  def withdraw(user: String) = {
+    players.get(user) match {
+      case Some(p) ⇒
+        val newPlayer = p.copy(balance = p.balance + StartingBalance)
+        updatePlayer(newPlayer).getOrElse(s"<@$user> now has ${newPlayer.balance}")
+      case _ ⇒ s"i don't know you brah"
     }
   }
 
@@ -93,7 +104,7 @@ class Casbot extends Actor with ActorLogging with Stash {
           self ! PoisonPill
         case _ ⇒
           log.info(s"Got players: $allPlayers")
-          players = allPlayers.map(p ⇒ p.id → p).toMap
+          players = allPlayers.map(p ⇒ p.user → p).toMap
           context become normal
           unstashAll()
       }
@@ -102,26 +113,25 @@ class Casbot extends Actor with ActorLogging with Stash {
   }
 
   def normal: Receive = {
-    case im: SlackMessages.IncomingMessage ⇒
-      log.info(s"IncomingMessage($im)")
-      val response = im.text match {
-        case GameCommands.Blackjack(ante) ⇒ add(im.user_id, im.user_name, Blackjack(ante.toInt))
-        case GameCommands.Roshambo(ante, play) ⇒ add(im.user_id, im.user_name, Roshambo(ante.toInt), Some(RPS.result(play, im.user_name)))
-        case text ⇒ players.get(im.user_id) match {
+    case SlackMessages.CassieMessage(user, channel, text) ⇒
+      log.info(s"CassieMessage($user, $channel, $text)")
+      val response = text match {
+        case GameCommands.Withdraw ⇒ Some(withdraw(user))
+        case GameCommands.Blackjack(ante) ⇒ Some(add(user, Blackjack(ante.toInt)))
+        case GameCommands.Roshambo(ante, play) ⇒ Some(add(user, Roshambo(ante.toInt), Some(RPS.result(play, user))))
+        case gameText ⇒ players.get(user) match {
           case Some(p) ⇒ p.currentGame match {
-            case Some(g: Blackjack) ⇒ text match {
-              case BlackjackCommands.Hit() ⇒ s"hit"
-              case BlackjackCommands.Stay() ⇒ s"stay"
-              case _ ⇒ Shrug
+            case Some(g: Blackjack) ⇒ gameText match {
+              case BlackjackCommands.Hit() ⇒ Some(s"hit")
+              case BlackjackCommands.Stay() ⇒ Some(s"stay")
+              case _ ⇒ None
             }
-            case _ ⇒ Shrug
+            case _ ⇒ None
           }
-          case _ ⇒ Shrug
+          case _ ⇒ None
         }
-
-
       }
-      sender() ! SlackMessages.Response(response)
+      response foreach (resp ⇒ sender() ! SendMessage(channel, resp))
 
     case _ ⇒
   }

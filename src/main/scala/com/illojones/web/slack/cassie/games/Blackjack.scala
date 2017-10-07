@@ -1,7 +1,7 @@
-package com.illojones.web.slack.casbot.games
+package com.illojones.web.slack.cassie.games
 
 import akka.actor.Actor
-import com.illojones.web.slack.casbot.Card
+import com.illojones.web.slack.cassie.Card
 
 class Blackjack extends Actor {
   var playerCards: List[Card] = List.empty

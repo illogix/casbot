@@ -1,4 +1,4 @@
-package com.illojones.web.slack.casbot
+package com.illojones.web.slack.cassie
 
 import akka.actor.{Actor, Props}
 

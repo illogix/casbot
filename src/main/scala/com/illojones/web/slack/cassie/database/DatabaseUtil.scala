@@ -1,6 +1,6 @@
-package com.illojones.web.slack.casbot.database
+package com.illojones.web.slack.cassie.database
 
-import com.illojones.web.slack.casbot.Casbot.Player
+import com.illojones.web.slack.cassie.Cassie.Player
 import slick.jdbc.PostgresProfile
 import slick.jdbc.PostgresProfile.api._
 import slick.jdbc.meta.MTable
@@ -20,13 +20,12 @@ object DatabaseUtil {
 
   def getDatabase = Database.forURL(dbConnectionUrl, driver = dbDriver)
 
-  case class DBPlayer(id: String, name: String, balance: Int)
+  case class DBPlayer(user: String, balance: Int)
 
   class Players(tag: Tag) extends Table[DBPlayer](tag, "players") {
-    def id = column[String]("id", O.PrimaryKey)
-    def name = column[String]("name")
+    def user = column[String]("user", O.PrimaryKey)
     def balance = column[Int]("balance")
-    def * = (id, name, balance) <> (DBPlayer.tupled, DBPlayer.unapply)
+    def * = (user, balance) <> (DBPlayer.tupled, DBPlayer.unapply)
   }
 
   val players = TableQuery[Players]
@@ -44,7 +43,7 @@ object DatabaseUtil {
   }
 
   def updatePlayer(db: DB, p: Player): Future[Int] = {
-    val upsert = players insertOrUpdate DBPlayer(p.id, p.name, p.balance)
+    val upsert = players insertOrUpdate DBPlayer(p.user, p.balance)
 
     db.run(upsert)
   }
@@ -52,6 +51,6 @@ object DatabaseUtil {
   def getPlayers(db: DB): Future[Seq[Player]] = {
     val query = players.result
 
-    db.run(query).map(_.map(dbp ⇒ Player(dbp.id, dbp.name, dbp.balance)))
+    db.run(query).map(_.map(dbp ⇒ Player(dbp.user, dbp.balance)))
   }
 }
