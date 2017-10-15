@@ -11,7 +11,6 @@ import akka.stream.scaladsl.{Flow, Keep, Sink, Source, SourceQueueWithComplete}
 import akka.stream.{ActorMaterializer, OverflowStrategy}
 import com.illojones.web.slack.Bot._
 import com.illojones.web.slack.SlackMessages._
-import com.illojones.web.slack.cassie.Cassie
 import com.illojones.web.slack.util.LongIterator
 import com.typesafe.config.Config
 import spray.json._
@@ -22,6 +21,7 @@ import scala.util.{Failure, Success}
 object Bot {
   def props(config: Config)(implicit system: ActorSystem, materializer: ActorMaterializer) = Props(new Bot(config))
 
+  case object Init
   case class WebSocketConnectSuccess(queue: SourceQueueWithComplete[Message], closed: Future[Done])
   case object WebSocketDisconnected
   case class SendMessage(channel: String, message: String)
@@ -34,7 +34,7 @@ class Bot(config: Config)(implicit val system: ActorSystem, val materializer: Ac
   import akka.pattern.pipe
   import context.dispatcher
 
-  private val cassie = context.actorOf(Cassie.props(config), "cassie")
+  private val msgHandler = context.actorOf(MessageHandler.props(config), "msgHandler")
 
   private val url = config.getString("slack.apiUrl")
   private val token = config.getString("slack.apiToken")
@@ -45,44 +45,19 @@ class Bot(config: Config)(implicit val system: ActorSystem, val materializer: Ac
   override def preStart(): Unit = {
     super.preStart()
 
-    http.singleRequest(HttpRequest(uri = Uri(url).withQuery(Query(Map("token" → token))))).pipeTo(self)
+    self ! Init
   }
 
   private var outboundMessageQueue: Option[SourceQueueWithComplete[Message]] = None
 
   private val idIter = LongIterator.from(1)
 
-  private def stripQuotes(jsVal: JsValue) = {
-    val s = jsVal.toString()
-    if (s.startsWith("\"") && s.endsWith("\"") && s.length > 1) s.substring(1, s.length - 1) else s
-  }
-
   override def receive: Receive = {
 
-    case m: TextMessage.Strict ⇒
-      val jsFields = JsonParser(ParserInput(m.text)).asJsObject.fields
+    case Init ⇒
+      http.singleRequest(HttpRequest(uri = Uri(url).withQuery(Query(Map("token" → token))))).pipeTo(self)
 
-      jsFields.get("type").map(stripQuotes) match {
-        case Some("message") ⇒
-          log.info(s"msg: ${m.text}")
-          val cm = for {
-            user ← jsFields.get("user").map(stripQuotes)
-            channel ← jsFields.get("channel").map(stripQuotes)
-            text ← jsFields.get("text").map(stripQuotes)
-          } yield {
-            CassieMessage(user, channel, text)
-          }
-
-          cm foreach (cassie ! _)
-
-        case _ ⇒
-
-      }
-
-    case _: TextMessage.Streamed ⇒ log.debug(s"Received large streamed message")
-
-    case m: Message ⇒ log.warning(s"Received unhandled Message: $m")
-
+    case m: Message ⇒ msgHandler ! m
 
     case SendMessage(channel, message) ⇒
       val resp = OutgoingMessage(idIter.next().toString, channel, message)
@@ -94,8 +69,8 @@ class Bot(config: Config)(implicit val system: ActorSystem, val materializer: Ac
       closed.onComplete(_ ⇒ self ! WebSocketDisconnected)
 
     case WebSocketDisconnected ⇒
-      log.info("WebSocket disconnected.")
-      context.stop(self)
+      log.info("WebSocket disconnected, re-initializing")
+      self ! Init
 
     case HttpResponse(StatusCodes.OK, headers, entity, _) ⇒
       Unmarshal(entity).to[ConnectResponse] onComplete {

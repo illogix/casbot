@@ -3,7 +3,7 @@ package com.illojones.web.slack.cassie
 import akka.actor.{Actor, ActorLogging, PoisonPill, Props, Stash}
 import akka.pattern.ask
 import com.illojones.web.slack.Bot.SendMessage
-import com.illojones.web.slack.SlackMessages
+import com.illojones.web.slack.SlackEvents.RegularMessage
 import com.illojones.web.slack.cassie.Cassie._
 import com.illojones.web.slack.cassie.database.DatabaseActor
 import com.illojones.web.slack.cassie.games.RPS
@@ -115,8 +115,8 @@ class Cassie(config: Config) extends Actor with ActorLogging with Stash {
   }
 
   def normal: Receive = {
-    case SlackMessages.CassieMessage(user, channel, text) ⇒
-      log.info(s"CassieMessage($user, $channel, $text)")
+    case RegularMessage(channel, user, text, ts, sourceTeam, team) ⇒
+      log.debug(s"RegularMessage($channel, $user, $text, $ts, $sourceTeam, $team)")
       val response = text match {
         case GameCommands.Withdraw ⇒ Some(withdraw(user))
         case GameCommands.Blackjack(ante) ⇒ Some(add(user, Blackjack(ante.toInt)))
