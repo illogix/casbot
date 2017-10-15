@@ -76,6 +76,8 @@ class MessageHandler(config: Config) extends Actor with ActorLogging {
 
       }
 
+    case msg: Bot.SendMessage ⇒ context.parent.forward(msg)
+
     case _ ⇒ log.debug(s"Unhandled message")
   }
 }
