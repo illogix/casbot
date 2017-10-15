@@ -12,5 +12,6 @@ libraryDependencies ++= Seq(
   "org.slf4j" % "slf4j-nop" % "1.6.4",
   "com.typesafe.slick" %% "slick-hikaricp" % "3.2.1",
   "postgresql" % "postgresql" % "9.1-901-1.jdbc4",
-  "org.scala-lang.modules" %% "scala-xml" % "1.0.6"
+  "org.scala-lang.modules" %% "scala-xml" % "1.0.6",
+  "com.lihaoyi" %% "scalatags" % "0.6.7"
 )

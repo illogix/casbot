@@ -19,7 +19,7 @@ object MessageHandler {
     if (s.startsWith("\"") && s.endsWith("\"") && s.length > 1) s.substring(1, s.length - 1) else s
   }
 
-  implicit class IntWithTimes(fields: Map[String, JsValue]) {
+  implicit class RichJsFields(fields: Map[String, JsValue]) {
     def getString(key: String): Option[String] = fields.get(key).map(stripQuotes)
 
     def getDouble(key: String): Option[Double] = getString(key).flatMap(l ⇒ Try(l.toDouble).toOption)
@@ -33,6 +33,8 @@ class MessageHandler(config: Config) extends Actor with ActorLogging {
   private val lager = context.actorOf(Lager.props(config), "lager")
 
   override def receive = {
+
+    case ar: Bot.ApiRequest ⇒ context.parent.forward(ar)
 
     case m: TextMessage.Strict ⇒
       val jsFields = JsonParser(ParserInput(m.text)).asJsObject.fields

@@ -16,6 +16,7 @@ import com.typesafe.config.Config
 import spray.json._
 
 import scala.concurrent.Future
+import scala.concurrent.duration._
 import scala.util.{Failure, Success}
 
 object Bot {
@@ -26,6 +27,11 @@ object Bot {
   case object WebSocketDisconnected
   case class SendMessage(channel: String, message: String)
 
+  case class ApiError(code: String) extends Exception(code)
+  case class InvalidResponseError(status: Int, body: String) extends Exception(s"Invalid response: $status")
+
+  case class ApiRequest(url: String)
+  case class ApiResponse(fields: Map[String, JsValue])
 }
 
 class Bot(config: Config)(implicit val system: ActorSystem, val materializer: ActorMaterializer)
@@ -36,10 +42,25 @@ class Bot(config: Config)(implicit val system: ActorSystem, val materializer: Ac
 
   private val msgHandler = context.actorOf(MessageHandler.props(config), "msgHandler")
 
-  private val url = config.getString("slack.apiUrl")
   private val token = config.getString("slack.apiToken")
+  private val connectUrl = config.getString("slack.connectUrl")
 
   val http = Http(context.system)
+
+  private def makeApiRequest(request: HttpRequest)(implicit system: ActorSystem): Future[ApiResponse] = {
+    Http().singleRequest(request).flatMap {
+      case response if response.status.intValue == 200 ⇒
+        response.entity.toStrict(10.seconds).map { entity ⇒
+          val jsFields = JsonParser(ParserInput(entity.data.decodeString("UTF-8"))).asJsObject.fields
+          ApiResponse(jsFields)
+        }
+
+      case response ⇒
+        response.entity.toStrict(10.seconds).map { entity ⇒
+          ApiResponse(Map.empty)
+        }
+    }
+  }
 
 
   override def preStart(): Unit = {
@@ -52,10 +73,13 @@ class Bot(config: Config)(implicit val system: ActorSystem, val materializer: Ac
 
   private val idIter = LongIterator.from(1)
 
+  def httpReq(url: String) = HttpRequest(uri = Uri(url).withQuery(Query(Map("token" → token))))
+
   override def receive: Receive = {
 
-    case Init ⇒
-      http.singleRequest(HttpRequest(uri = Uri(url).withQuery(Query(Map("token" → token))))).pipeTo(self)
+    case Init ⇒ http.singleRequest(httpReq(connectUrl)).pipeTo(self)
+
+    case ar: ApiRequest ⇒ makeApiRequest(httpReq(ar.url)).pipeTo(sender())
 
     case m: Message ⇒ msgHandler ! m
 
