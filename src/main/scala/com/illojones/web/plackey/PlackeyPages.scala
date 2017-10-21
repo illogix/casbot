@@ -68,11 +68,11 @@ object PlackeyPages {
   private final val LinkSplitRegex = """((?=<[^>]{1,1000}>)|(?<=<[^>]{1,1000}>))"""
 
   private def formatText(text: String) = {
-    val t1 = text.replace("&amp;", "&").replace("""\\""", """\\""").replace("\\\"", "\"")
+    val t1 = text.replace("&amp;", "&").replace("\\\\", "\\").replace("\\\"", "\"")
 
     t1.split(LinkSplitRegex).map(frag ⇒
       LinkRegex.findFirstMatchIn(frag) match {
-        case None ⇒ span(frag)
+        case None ⇒ span(frag.replace("&lt;", "<").replace("&gt;", ">"))
         case Some(m) if m.group(1).startsWith("@") ⇒ span(frag)
         case Some(m) ⇒
           m.group(1).split('|') match {
