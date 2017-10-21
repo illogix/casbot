@@ -35,7 +35,7 @@ class Plactor(config: Config)(implicit val actorSystem: ActorSystem) extends Act
   val db = DatabaseUtil.getDatabase(DatabaseUtil.dbConnectionUrl(config.getString("plackey.dbHost"),
     config.getString("plackey.dbDb"), config.getString("plackey.dbUser"), config.getString("plackey.dbPassword")))
 
-  private def route(users: Map[String, String], channels: Map[String, String]) =
+  private def route(users: ListMap[String, String], channels: ListMap[String, String]) =
     path(plackeyPath) {
       get {
         complete {
@@ -64,7 +64,7 @@ class Plactor(config: Config)(implicit val actorSystem: ActorSystem) extends Act
   def processQuery(toReply: ActorRef, q: PlackeyMessages.Query,
                    users: ListMap[String, String], channels: ListMap[String, String]) = {
     DatabaseUtil.runQuery(db, q) onComplete {
-      case Success(r) ⇒ toReply ! PlackeyMessages.Response(PlackeyPages.resultsTable(r, users, channels))
+      case Success(r) ⇒ toReply ! PlackeyMessages.Response(PlackeyPages.resultsPage(r, users, channels).render)
       case Failure(r) ⇒ toReply ! PlackeyMessages.Response(s"${r.getMessage}")
     }
   }
