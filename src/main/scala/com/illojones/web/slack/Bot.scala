@@ -125,7 +125,9 @@ class Bot(config: Config)(implicit val system: ActorSystem, val materializer: Ac
               context.stop(self)
           }
 
-        case Failure(t) ⇒ log.error(s"Error unmarshalling ConnectResponse: ${t.getMessage}")
+        case Failure(t) ⇒
+          log.error(s"Re-initializing after error unmarshalling ConnectResponse: ${t.getMessage}")
+          self ! Init
       }
 
     case resp @ HttpResponse(code, _, _, _) ⇒

@@ -6,8 +6,9 @@ import com.illojones.web.slack.Bot.SendMessage
 import com.illojones.web.slack.SlackEvents.RegularMessage
 import com.illojones.web.slack.cassie.Cassie._
 import com.illojones.web.slack.cassie.CassieMessages._
+import com.illojones.web.slack.cassie.CassieUtils._
 import com.illojones.web.slack.cassie.database.DatabaseActor
-import com.illojones.web.slack.cassie.games.{GameActor, RPS}
+import com.illojones.web.slack.cassie.games.{Blackjack, GameActor, RPS}
 import com.typesafe.config.Config
 
 import scala.annotation.tailrec
@@ -24,7 +25,7 @@ object Cassie {
 
   case class Result(playerResults: Map[String, Int], message: String)
 
-  case class Game(id: Int, name: String, actor: ActorRef)
+  case class Game(id: Int, name: String, actor: ActorRef, originalChannel: String)
 
 }
 
@@ -64,12 +65,12 @@ class Cassie(config: Config) extends Actor with ActorLogging with Stash {
     error
   }
 
-  def withdraw(user: String) = {
+  def withdraw(user: String): String = {
     players.get(user) match {
       case Some(p) ⇒
         val newPlayer = p.copy(balance = p.balance + StartingBalance)
         updatePlayer(newPlayer).getOrElse(s"<@$user> now has ${newPlayer.balance}")
-      case _ ⇒ s"i don't know you brah"
+      case _ ⇒ Responses.unknown(user)
     }
   }
 
@@ -91,9 +92,23 @@ class Cassie(config: Config) extends Actor with ActorLogging with Stash {
     case _ ⇒ stash()
   }
 
+  private def printBalances(showPlayerBalance: Iterable[String]) = {
+    val balances = showPlayerBalance.flatMap { user ⇒
+      players.get(user).map(p ⇒ s"<@$user>: ${p.balance}")
+    }
+    s" New Balances: ${balances.mkString(", ")}"
+  }
 
-  private def sendMessage(msg: String, channel: Option[String] = None) = {
+  private def sendMessage(msg: String, channel: Option[String] = None): Unit = {
     context.parent ! SendMessage(channel.getOrElse(defaultChannel), msg)
+  }
+
+  private def sendHelpMessage(channel: String, sub: String): Unit = {
+    sub.toLowerCase match {
+      case "rps" ⇒ sendMessage(HelpMessages.RPS, Some(channel))
+      case "bj" ⇒ sendMessage(HelpMessages.Blackjack, Some(channel))
+      case _ ⇒ sendMessage(HelpMessages.General, Some(channel))
+    }
   }
 
   private def addPlayer(user: String) = {
@@ -102,23 +117,23 @@ class Cassie(config: Config) extends Actor with ActorLogging with Stash {
     p
   }
 
-  private def newGame(user: String, game: String, ante: String, channel: String) = {
+  private def launchGame(game: String, user: String, channel: String, props: (Int) ⇒ Props) = {
     val player = players.getOrElse(user, addPlayer(user))
+    val id = getTableId()
+    val actor = context.actorOf(props(id), id.toString)
+    games = games + (id → Game(id, game, actor, channel))
+    updatePlayer(player.copy(currentTable = Some(id)), writeToDb = false)
+  }
 
+  private def newGame(user: String, channel: String, game: String, ante: Option[String]) = {
     game match {
-      case "rps" ⇒
-        val id = getTableId()
-        Try(ante.toInt).toOption.foreach { anteInt ⇒
-          val actor = context.actorOf(RPS.props(RPS.RPSInitTable(user, anteInt)), id.toString)
-          games = games + (id → Game(id, "rps", actor))
-          updatePlayer(player.copy(currentTable = Some(id)), writeToDb = false)
-        }
-      case _ ⇒
-        sendMessage(s"Game '$game' doesn't exist!", Some(channel))
+      case "rps" ⇒ launchGame("rps", user, channel, (id) ⇒ RPS.props(RPS.RPSInitTable(id, user, betInt(ante))))
+      case "bj" ⇒ launchGame("bj", user, channel, (id) ⇒ Blackjack.props(Blackjack.BJInitTable(id, user, ante.map(betInt))))
+      case _ ⇒ sendMessage(s"Game '$game' doesn't exist!", Some(channel))
     }
   }
 
-  private def joinGame(user: String, table: String, channel: String) = {
+  private def joinGame(user: String, table: String, channel: String): Unit = {
     val player = players.getOrElse(user, addPlayer(user))
 
     Try(table.toInt).toOption.flatMap(games.get) match {
@@ -138,10 +153,23 @@ class Cassie(config: Config) extends Actor with ActorLogging with Stash {
     }
   }
 
+  private def canPlayerCover(user: String, bet: Int, alert: Boolean = true) = {
+    players.get(user).map(_.balance) match {
+      case Some(bal) ⇒
+        val canCover = bal >= bet
+        if (alert && !canCover) sendMessage(Responses.cantCover(user, bet, bal))
+        canCover
+      case None ⇒
+        sendMessage(Responses.unknown(user))
+        false
+    }
+  }
+
   def normal: Receive = {
     case RegularMessage(channel, user, text, ts, sourceTeam, team) ⇒
-      log.debug(s"RegularMessage($channel, $user, $text, $ts, $sourceTeam, $team)")
       text match {
+        case GameCommands.Help(sub) ⇒ sendHelpMessage(channel, sub)
+
         case GameCommands.TableCommand(id, msg) ⇒
           players.get(user).flatMap(_.currentTable) match {
             case Some(table) if table.toString == id && games.contains(table) ⇒
@@ -149,43 +177,64 @@ class Cassie(config: Config) extends Actor with ActorLogging with Stash {
             case _ ⇒ sendMessage(Responses.Shrug, Some(channel))
           }
 
-        case GameCommands.SitGame(game, ante) ⇒
-          if (!isSitting(user, Some(channel))) newGame(user, game, ante, channel)
+        case GameCommands.SitWithAnte(game, ante) if !isSitting(user, Some(channel)) && canPlayerCover(user, betInt(ante)) ⇒
+          newGame(user, channel, game, Some(ante))
 
-        case GameCommands.SitTable(table) ⇒
-          if (!isSitting(user, Some(channel))) joinGame(user, table, channel)
+        case GameCommands.SitWithoutAnte(game) if !isSitting(user, Some(channel)) ⇒
+          newGame(user, channel, game, None)
+
+        case GameCommands.JoinTable(table) if !isSitting(user, Some(channel)) ⇒
+          joinGame(user, table, channel)
 
         case GameCommands.LeaveTable ⇒
+          // TODO - outstanding hands, or just subtract money @ bet
           val player = players.get(user)
           player.flatMap(_.currentTable).flatMap(games.get).map(_.actor).foreach { _ ! LeaveGame(user) }
           player.foreach(p ⇒ updatePlayer(p.copy(currentTable = None), writeToDb = false))
 
-        case GameCommands.Withdraw ⇒ sendMessage(withdraw(user))
-
-        case GameCommands.SoloRoshambo(ante, play) ⇒
-          Try(ante.toInt).toOption.foreach { a ⇒
-            val id = getTableId()
-            val actor = context.actorOf(RPS.props(RPS.RPSInitSolo(user, a, play)), id.toString)
-            games = games + (id → Game(id, "rps", actor))
+        case GameCommands.Withdraw ⇒
+          players.get(user) match {
+            case Some(p) ⇒ p.currentTable match {
+              case Some(_) ⇒ sendMessage("Must leave table to withdraw.")
+              case None ⇒ sendMessage(withdraw(user))
+            }
+            case None ⇒
+              addPlayer(user)
+              sendMessage(withdraw(user))
           }
+
+        case GameCommands.SoloRoshambo(ante, play) if !isSitting(user, Some(channel)) && canPlayerCover(user, betInt(ante)) ⇒
+          launchGame("rps", user, channel, (id) ⇒ RPS.props(RPS.RPSInitSolo(id, user, betInt(ante), play)))
+
+        case GameCommands.SoloBlackjack(ante) if !isSitting(user, Some(channel)) && canPlayerCover(user, betInt(ante)) ⇒
+          launchGame("bj", user, channel, (id) ⇒ Blackjack.props(Blackjack.BJInitSolo(id, user, betInt(ante))))
+
+        case GameCommands.TestUser(username, cmd) ⇒ self ! RegularMessage(channel, username, cmd, ts, sourceTeam, team)
 
         case _ ⇒
       }
 
     case sm: SendCassieMessage ⇒
       val actor = sender()
-      val tableId = games.find(_._2.actor == actor) match {
-        case Some((id, _)) ⇒ id.toString
-        case None ⇒ Responses.Shrug
+      games.find(_._2.actor == actor) match {
+        case Some((id, game)) ⇒
+          val channel = if (sm.originalChannel) Some(game.originalChannel) else None
+          sendMessage(s"[$id] ${sm.message}", channel)
+        case None ⇒
+          log.error(s"Can't find game for $sm")
       }
-
-      sendMessage(s"[$tableId] ${sm.message}", sm.channel)
 
     case GameActor.Terminated ⇒
       val actor = sender()
       context.stop(actor)
       games.find(_._2.actor == actor) match {
-        case Some((id, _)) ⇒ games = games - id
+        case Some((id, _)) ⇒
+          games = games - id
+          val errs = players.filter(_._2.currentTable.contains(id)).flatMap { p ⇒
+            updatePlayer(p._2.copy(currentTable = None), writeToDb = false)
+          }
+          if (errs.nonEmpty)
+            sendMessage(s"Errors terminating table $id: ${errs.mkString(", ")}")
         case None ⇒ log.error("Got Terminated from unknown actor")
       }
 
@@ -196,11 +245,16 @@ class Cassie(config: Config) extends Actor with ActorLogging with Stash {
         case None ⇒ ""
       }
 
-      balanceUpdates.foreach { case (user, diff) ⇒
-        players.get(user).foreach { p ⇒ updatePlayer(p.copy(balance = p.balance + diff)) }
+      balanceUpdates.foreach {
+        case (user, diff) if diff != 0 ⇒
+          players.get(user).foreach { p ⇒ updatePlayer(p.copy(balance = p.balance + diff)) }
+        case _ ⇒
       }
 
-      sendMessage(tableString + msg)
+      sendMessage(tableString + msg + printBalances(balanceUpdates.keys), None)
+
+    case CanPlayerCoverRequest(user, bet, alert) ⇒
+      sender() ! CanPlayerCoverResponse(user, canPlayerCover(user, bet, alert))
 
     case _ ⇒
   }

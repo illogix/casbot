@@ -12,8 +12,8 @@ import scala.util.Random
 object RPS {
   def props(init: InitMessage) = Props(new RPS(init))
 
-  case class RPSInitSolo(player: String, ante: Int, move: String) extends SoloInitMessage
-  case class RPSInitTable(player: String, ante: Int) extends TableInitMessage
+  case class RPSInitSolo(id: Int, player: String, ante: Int, move: String) extends SoloInitMessage
+  case class RPSInitTable(id: Int, player: String, ante: Int) extends TableInitMessage
 
 //  case class RPSState() extends GameState
 //  case class RPSPlayerState() extends PlayerState
@@ -43,7 +43,7 @@ object RPS {
     case _ ⇒ NoMove
   }
 
-  def getResult(ante: Int, player: String, playerMove: Move, p2: Option[(String, Move)] = None): Result = {
+  private[RPS] def getResult(ante: Int, player: String, playerMove: Move, p2: Option[(String, Move)] = None): Result = {
     val p2Name = p2.map(id ⇒ s"<@${id._1}>").getOrElse("Dealer")
     val p2Move = p2.map(_._2).getOrElse(randomMove)
 
@@ -51,7 +51,9 @@ object RPS {
 
     (playerMove, p2Move) match {
       case (_, NoMove) | (NoMove, _) ⇒ Result(Map.empty, "hax!")
-      case (p, h) if p == h ⇒ Result(Map.empty, s"$playString Draw.")
+      case (p, h) if p == h ⇒
+        val res = Seq(player → 0) ++ p2.map(_._1 → ante)
+        Result(res.toMap, s"$playString Draw.")
       case (Rock, Scissors) | (Paper, Rock) | (Scissors, Paper) ⇒
         val res = Seq(player → ante) ++ p2.map(_._1 → (0 - ante))
         Result(res.toMap, s"$playString <@$player> wins!")
@@ -109,11 +111,11 @@ class RPS(init: InitMessage) extends GameActor {
   }
 
   override def receive = {
-    case RPSInitSolo(player, ante, move) ⇒
+    case RPSInitSolo(_, player, ante, move) ⇒
       context.parent ! getResult(ante, player, getMoveFromMessage(move))
       context.parent ! Terminated
 
-    case RPSInitTable(player, ante) ⇒
+    case RPSInitTable(_, player, ante) ⇒
       context.parent ! SendCassieMessage(s"<@$player> sat at RPS with a bet of $ante.  Waiting for an opponent...")
       context become waitingP2(ante, player)
   }
